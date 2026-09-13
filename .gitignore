@@ -1,8 +1,11 @@
 __pycache__/
 .venv/
 .env
+data/gmail_token.json
+credentials.json
 *.pyc
 *.zip
 *.xml
 *.db
 .DS_Store
+data/
