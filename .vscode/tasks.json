@@ -1,0 +1,12 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "dmarc-review-tool",
+            "type": "shell",
+            "command": "poetry run streamlit run app.py",
+            "isBackground": true,
+            "problemMatcher": []
+        }
+    ]
+}
