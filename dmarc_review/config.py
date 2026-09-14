@@ -19,6 +19,7 @@ class AppConfig:
     gmail_token_path: Path
     gmail_label_query: str
     gmail_max_results: int
+    gmail_mark_as_read: bool
 
 
 def load_config() -> AppConfig:
@@ -34,6 +35,12 @@ def load_config() -> AppConfig:
     gmail_token_path = base_dir / os.getenv("GMAIL_TOKEN_PATH", "data/gmail_token.json")
     gmail_label_query = os.getenv("GMAIL_LABEL_QUERY", "label:DMARC-Reports has:attachment")
     gmail_max_results = int(os.getenv("GMAIL_MAX_RESULTS", "100"))
+    gmail_mark_as_read = os.getenv("GMAIL_MARK_AS_READ", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
     incoming_compressed_dir.mkdir(parents=True, exist_ok=True)
     legacy_gmail_zip_dir.mkdir(parents=True, exist_ok=True)
@@ -52,4 +59,5 @@ def load_config() -> AppConfig:
         gmail_token_path=gmail_token_path,
         gmail_label_query=gmail_label_query,
         gmail_max_results=gmail_max_results,
+        gmail_mark_as_read=gmail_mark_as_read,
     )

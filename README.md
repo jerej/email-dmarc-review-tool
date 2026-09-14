@@ -88,7 +88,17 @@ The app will:
 - fetch labeled Gmail messages with attachments
 - save candidate DMARC compressed attachments into `data/compressed_incoming/`
 - dedupe by attachment content hash
+- mark successfully processed source Gmail messages as read by default
 - auto-run ingestion when new attachments are saved
+
+To keep messages unread instead, set `GMAIL_MARK_AS_READ=false` in `.env`.
+
+OAuth scope follows this setting:
+
+- `GMAIL_MARK_AS_READ=true` uses `gmail.modify` (needed to clear `UNREAD`)
+- `GMAIL_MARK_AS_READ=false` uses `gmail.readonly`
+
+If you change `GMAIL_MARK_AS_READ` after authenticating, the next fetch may prompt OAuth consent again so the cached token matches the required scope.
 
 ## Unattended automation
 

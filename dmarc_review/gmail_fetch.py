@@ -12,7 +12,8 @@ from googleapiclient.discovery import build
 
 from dmarc_review import db
 
-GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
 ACCEPTED_EXTENSIONS = {
     ".zip",
     ".gz",
@@ -35,6 +36,7 @@ class GmailFetchStats:
     messages_new: int = 0
     attachments_saved: int = 0
     attachments_duplicate: int = 0
+    messages_marked_read: int = 0
     errors: list[str] | None = None
 
     def __post_init__(self) -> None:
@@ -64,18 +66,23 @@ def _decode_attachment_bytes(encoded_data: str) -> bytes:
     return base64.urlsafe_b64decode(encoded_data.encode("utf-8"))
 
 
-def _load_credentials(credentials_path: Path, token_path: Path) -> Credentials:
+def _scopes_for(mark_as_read: bool) -> list[str]:
+    return [GMAIL_MODIFY_SCOPE] if mark_as_read else [GMAIL_READONLY_SCOPE]
+
+
+def _load_credentials(credentials_path: Path, token_path: Path, scopes: list[str]) -> Credentials:
     creds: Credentials | None = None
     if token_path.exists():
-        creds = Credentials.from_authorized_user_file(str(token_path), GMAIL_SCOPES)
+        creds = Credentials.from_authorized_user_file(str(token_path), scopes)
 
-    if creds and creds.valid:
+    if creds and creds.valid and creds.has_scopes(scopes):
         return creds
 
     if creds and creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        token_path.write_text(creds.to_json(), encoding="utf-8")
-        return creds
+        if creds.has_scopes(scopes):
+            token_path.write_text(creds.to_json(), encoding="utf-8")
+            return creds
 
     if not credentials_path.exists():
         raise GmailFetchError(
@@ -83,7 +90,7 @@ def _load_credentials(credentials_path: Path, token_path: Path) -> Credentials:
             "Create an OAuth Desktop App client in Google Cloud and save the JSON there."
         )
 
-    flow = InstalledAppFlow.from_client_secrets_file(str(credentials_path), GMAIL_SCOPES)
+    flow = InstalledAppFlow.from_client_secrets_file(str(credentials_path), scopes)
     creds = flow.run_local_server(port=0)
     token_path.write_text(creds.to_json(), encoding="utf-8")
     return creds
@@ -106,11 +113,13 @@ def fetch_gmail_dmarc_attachments(
     token_path: Path,
     query: str,
     max_results: int = 100,
+    mark_as_read: bool = True,
 ) -> GmailFetchStats:
     stats = GmailFetchStats()
+    scopes = _scopes_for(mark_as_read)
 
     try:
-        creds = _load_credentials(credentials_path, token_path)
+        creds = _load_credentials(credentials_path, token_path, scopes)
     except Exception as exc:  # noqa: BLE001 - expose setup issues to user
         raise GmailFetchError(str(exc)) from exc
 
@@ -181,6 +190,22 @@ def fetch_gmail_dmarc_attachments(
                     file_path.write_bytes(attachment_bytes)
                     db.mark_processed_file(conn, attachment_key, "gmail-attachment-hash")
                     stats.attachments_saved += 1
+
+                if mark_as_read:
+                    try:
+                        (
+                            service.users()
+                            .messages()
+                            .modify(
+                                userId="me",
+                                id=message_id,
+                                body={"removeLabelIds": ["UNREAD"]},
+                            )
+                            .execute()
+                        )
+                        stats.messages_marked_read += 1
+                    except Exception as exc:  # noqa: BLE001 - keep processing even if label update fails
+                        stats.errors.append(f"Failed to mark Gmail message as read {message_id}: {exc}")
 
                 db.mark_processed_file(conn, message_key, "gmail-message")
             except Exception as exc:  # noqa: BLE001 - keep fetching other messages

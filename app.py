@@ -63,11 +63,13 @@ def run() -> None:
                 token_path=cfg.gmail_token_path,
                 query=cfg.gmail_label_query,
                 max_results=cfg.gmail_max_results,
+                mark_as_read=cfg.gmail_mark_as_read,
             )
             st.success(
                 "Gmail fetch complete. "
                 f"Messages seen: {gmail_stats.messages_seen}, new messages: {gmail_stats.messages_new}, "
-                f"attachments saved: {gmail_stats.attachments_saved}, duplicate attachments skipped: {gmail_stats.attachments_duplicate}."
+                f"attachments saved: {gmail_stats.attachments_saved}, duplicate attachments skipped: {gmail_stats.attachments_duplicate}, "
+                f"messages marked read: {gmail_stats.messages_marked_read}."
             )
             if gmail_stats.errors:
                 for err in gmail_stats.errors:
