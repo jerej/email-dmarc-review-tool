@@ -110,7 +110,7 @@ poetry run dmarc-fetch
 Example cron entry (daily at 6:15 AM):
 
 ```cron
-15 6 * * * cd /Users/yourname/src/mediatemple/dmarc-review-tool && /usr/bin/env poetry run dmarc-fetch >> data/fetch.log 2>&1
+15 6 * * * cd /Users/yourname/src/dmarc-review-tool && /usr/bin/env poetry run dmarc-fetch >> data/fetch.log 2>&1
 ```
 
 For macOS launchd, use the same command in a LaunchAgent with your preferred interval.
