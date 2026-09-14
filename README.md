@@ -131,3 +131,7 @@ The ingestion process avoids reprocessing already-seen ZIP/XML files.
 - The parser is defensive against missing fields and supports namespaced XML tags.
 - Reverse DNS lookup failures are handled gracefully.
 - Risk labels are heuristic and intended for human triage, not automated blocking.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
