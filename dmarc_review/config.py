@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 class AppConfig:
     base_dir: Path
     incoming_compressed_dir: Path
-    legacy_gmail_zip_dir: Path
     watched_input_dirs: tuple[Path, ...]
     extracted_xml_dir: Path
     db_path: Path
@@ -28,7 +27,6 @@ def load_config() -> AppConfig:
     base_dir = Path.cwd()
     data_dir = base_dir / "data"
     incoming_compressed_dir = data_dir / "compressed_incoming"
-    legacy_gmail_zip_dir = data_dir / "gmail_zips"
     extracted_xml_dir = data_dir / "extracted_xml"
     db_path = data_dir / "dmarc_reports.sqlite"
     gmail_credentials_path = base_dir / os.getenv("GMAIL_CREDENTIALS_PATH", "credentials.json")
@@ -43,7 +41,6 @@ def load_config() -> AppConfig:
     }
 
     incoming_compressed_dir.mkdir(parents=True, exist_ok=True)
-    legacy_gmail_zip_dir.mkdir(parents=True, exist_ok=True)
     extracted_xml_dir.mkdir(parents=True, exist_ok=True)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     gmail_token_path.parent.mkdir(parents=True, exist_ok=True)
@@ -51,8 +48,7 @@ def load_config() -> AppConfig:
     return AppConfig(
         base_dir=base_dir,
         incoming_compressed_dir=incoming_compressed_dir,
-        legacy_gmail_zip_dir=legacy_gmail_zip_dir,
-        watched_input_dirs=(incoming_compressed_dir, legacy_gmail_zip_dir),
+        watched_input_dirs=(incoming_compressed_dir,),
         extracted_xml_dir=extracted_xml_dir,
         db_path=db_path,
         gmail_credentials_path=gmail_credentials_path,

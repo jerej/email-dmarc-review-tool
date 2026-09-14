@@ -30,8 +30,7 @@ This repo now uses Poetry as the primary environment and dependency manager.
 - `dmarc_review/parser.py` DMARC XML parsing + reverse DNS lookup
 - `dmarc_review/risk.py` initial risk scoring heuristic
 - `dmarc_review/db.py` SQLite schema + query helpers
-- `data/compressed_incoming/` primary watched input directory for compressed reports
-- `data/gmail_zips/` legacy watched input directory (still scanned for compatibility)
+- `data/compressed_incoming/` watched input directory for compressed reports
 - `data/extracted_xml/` extracted XML staging files
 - `.env.example` Gmail fetch configuration template
 

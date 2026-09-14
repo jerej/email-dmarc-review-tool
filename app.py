@@ -39,8 +39,7 @@ def run() -> None:
 
     with st.sidebar:
         st.subheader("Folders")
-        st.write(f"Primary incoming folder: {cfg.incoming_compressed_dir}")
-        st.write(f"Legacy incoming folder (also scanned): {cfg.legacy_gmail_zip_dir}")
+        st.write(f"Incoming folder: {cfg.incoming_compressed_dir}")
         st.write(f"Extracted XML folder: {cfg.extracted_xml_dir}")
         st.write(f"SQLite DB: {cfg.db_path}")
         st.write(f"Gmail query: {cfg.gmail_label_query}")
