@@ -2,7 +2,7 @@
 name = "dmarc-review-tool"
 version = "0.1.0"
 description = "Local Streamlit dashboard for daily DMARC aggregate report review"
-authors = ["Julian <you@example.com>"]
+authors = ["Jere Julian <github@stagerigger.com>"]
 readme = "README.md"
 packages = [{ include = "dmarc_review" }]
 
