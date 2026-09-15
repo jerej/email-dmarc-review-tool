@@ -70,20 +70,27 @@ def _scopes_for(mark_as_read: bool) -> list[str]:
     return [GMAIL_MODIFY_SCOPE] if mark_as_read else [GMAIL_READONLY_SCOPE]
 
 
-def _load_credentials(credentials_path: Path, token_path: Path, scopes: list[str]) -> Credentials:
-    creds: Credentials | None = None
-    if token_path.exists():
-        creds = Credentials.from_authorized_user_file(str(token_path), scopes)
+def _auth_recovery_hint(token_path: Path, scopes: list[str]) -> str:
+    return (
+        "Authentication failed due to scope/token mismatch. "
+        f"Delete token cache at {token_path} and retry to trigger a fresh login. "
+        f"Requested scopes: {', '.join(scopes)}"
+    )
 
-    if creds and creds.valid and creds.has_scopes(scopes):
-        return creds
 
-    if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        if creds.has_scopes(scopes):
-            token_path.write_text(creds.to_json(), encoding="utf-8")
-            return creds
+def _is_scope_related_auth_error(exc: Exception) -> bool:
+    lowered = str(exc).lower()
+    markers = (
+        "invalid_scope",
+        "insufficientpermissions",
+        "insufficient permissions",
+        "scope has changed",
+        "access_denied",
+    )
+    return any(marker in lowered for marker in markers)
 
+
+def _run_oauth_flow(credentials_path: Path, token_path: Path, scopes: list[str]) -> Credentials:
     if not credentials_path.exists():
         raise GmailFetchError(
             f"Missing Gmail OAuth client file: {credentials_path}. "
@@ -94,6 +101,60 @@ def _load_credentials(credentials_path: Path, token_path: Path, scopes: list[str
     creds = flow.run_local_server(port=0)
     token_path.write_text(creds.to_json(), encoding="utf-8")
     return creds
+
+
+def _load_credentials(
+    credentials_path: Path,
+    token_path: Path,
+    scopes: list[str],
+    *,
+    allow_reauth_retry: bool = True,
+) -> Credentials:
+    creds: Credentials | None = None
+    token_exists = token_path.exists()
+
+    if token_exists:
+        try:
+            creds = Credentials.from_authorized_user_file(str(token_path), scopes)
+        except Exception as exc:  # noqa: BLE001 - malformed token should not block reauth
+            if allow_reauth_retry:
+                token_path.unlink(missing_ok=True)
+                return _load_credentials(
+                    credentials_path,
+                    token_path,
+                    scopes,
+                    allow_reauth_retry=False,
+                )
+            raise GmailFetchError(f"Failed to load Gmail token cache. {_auth_recovery_hint(token_path, scopes)}") from exc
+
+    if creds and creds.valid and creds.has_scopes(scopes):
+        return creds
+
+    if creds and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+        except Exception as exc:  # noqa: BLE001 - refresh can fail when scope requirements changed
+            if allow_reauth_retry and _is_scope_related_auth_error(exc):
+                token_path.unlink(missing_ok=True)
+                return _load_credentials(
+                    credentials_path,
+                    token_path,
+                    scopes,
+                    allow_reauth_retry=False,
+                )
+            raise GmailFetchError(_auth_recovery_hint(token_path, scopes)) from exc
+
+        if creds.has_scopes(scopes):
+            token_path.write_text(creds.to_json(), encoding="utf-8")
+            return creds
+
+    try:
+        return _run_oauth_flow(credentials_path, token_path, scopes)
+    except Exception as exc:  # noqa: BLE001 - surface actionable auth guidance
+        if allow_reauth_retry and _is_scope_related_auth_error(exc):
+            token_path.unlink(missing_ok=True)
+            return _run_oauth_flow(credentials_path, token_path, scopes)
+        raise GmailFetchError(_auth_recovery_hint(token_path, scopes)) from exc
 
 
 def _iter_message_parts(payload: dict) -> list[dict]:

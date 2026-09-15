@@ -99,6 +99,15 @@ OAuth scope follows this setting:
 
 If you change `GMAIL_MARK_AS_READ` after authenticating, the next fetch may prompt OAuth consent again so the cached token matches the required scope.
 
+If Gmail returns an `invalid_scope` (or similar permission/scope) error, the app now retries auth once by invalidating the cached token and re-running OAuth.
+If auth still fails, remove the token cache manually and retry:
+
+```bash
+rm -f data/gmail_token.json
+```
+
+Then click **Fetch Gmail DMARC Attachments** again to force a fresh login.
+
 ## Unattended automation
 
 You can run Gmail fetch + ingestion without opening Streamlit:
