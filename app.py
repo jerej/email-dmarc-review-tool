@@ -33,6 +33,12 @@ def _domain_name_series(df: pd.DataFrame) -> pd.Series:
     return header_from.where(header_from != "", df["domain"].fillna("").astype(str))
 
 
+def _contains_text(df: pd.DataFrame, column: str, needle: str) -> pd.Series:
+    if column not in df.columns:
+        return pd.Series(False, index=df.index)
+    return df[column].fillna("").astype(str).str.contains(needle, case=False, na=False)
+
+
 def _build_domain_summary(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(columns=["domain_name", "total_messages", "pass_count", "fail_like_count"])
@@ -125,6 +131,12 @@ def run() -> None:
             "Table data range",
             ["All time", "Recent (last 24 hours)", "Last 7 days"],
             default="All time",
+        )
+        domain_filter = st.text_input(
+            "Domain filter",
+            value="",
+            placeholder="e.g. moncurefire",
+            help="Case-insensitive match against DMARC domain fields.",
         )
 
         fetch_gmail_clicked = st.button("Fetch Gmail DMARC Attachments")
@@ -231,19 +243,29 @@ def run() -> None:
         day_summary.set_index("report_day")[["total_messages", "pass_count", "fail_like_count", "softfail_count"]]
     )
 
+    report_end_ts = pd.to_datetime(raw_records["report_end"], errors="coerce")
+
     if table_range == "Recent (last 24 hours)":
         cutoff = pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(hours=24)
-        report_end_ts = pd.to_datetime(raw_records["report_end"], errors="coerce")
         filtered_records = raw_records.loc[report_end_ts >= cutoff].copy()
         st.caption("Tables filtered to reports ending in the last 24 hours.")
     elif table_range == "Last 7 days":
         cutoff = pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(days=7)
-        report_end_ts = pd.to_datetime(raw_records["report_end"], errors="coerce")
         filtered_records = raw_records.loc[report_end_ts >= cutoff].copy()
         st.caption("Tables filtered to reports ending in the last 7 days.")
     else:
         filtered_records = raw_records
         st.caption("Tables showing all available records.")
+
+    domain_filter_value = domain_filter.strip()
+    if domain_filter_value:
+        domain_like = _domain_name_series(filtered_records)
+        domain_mask = domain_like.str.contains(domain_filter_value, case=False, na=False)
+        domain_mask |= _contains_text(filtered_records, "domain", domain_filter_value)
+        domain_mask |= _contains_text(filtered_records, "auth_dkim_domain", domain_filter_value)
+        domain_mask |= _contains_text(filtered_records, "auth_spf_domain", domain_filter_value)
+        filtered_records = filtered_records.loc[domain_mask].copy()
+        st.caption(f"Domain filter active: '{domain_filter_value}'")
 
     domain_summary = _build_domain_summary(filtered_records)
     suspicious_ips = _build_suspicious_ips(filtered_records)
@@ -255,7 +277,7 @@ def run() -> None:
     st.dataframe(suspicious_ips)
 
     st.subheader("Raw Records")
-    st.dataframe(raw_records)
+    st.dataframe(filtered_records)
 
 
 if __name__ == "__main__":
