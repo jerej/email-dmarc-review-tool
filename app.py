@@ -11,6 +11,7 @@ from dmarc_review.db import (
     init_db,
     reset_ingestion_state,
 )
+
 from dmarc_review.gmail_fetch import GmailFetchError, fetch_gmail_dmarc_attachments
 from dmarc_review.ingest import ingest_from_watched_folder
 
@@ -62,7 +63,8 @@ def _build_domain_summary(df: pd.DataFrame) -> pd.DataFrame:
                     "pass_count": int(g.loc[pass_mask.loc[g.index], "message_count"].sum()),
                     "fail_like_count": int(g.loc[fail_like_mask.loc[g.index], "message_count"].sum()),
                 }
-            )
+            ),
+            include_groups=False,
         )
         .reset_index()
         .sort_values("total_messages", ascending=False)
@@ -104,7 +106,8 @@ def _build_suspicious_ips(df: pd.DataFrame) -> pd.DataFrame:
                     "spf_fail_messages": int(g.loc[g["spf_result"] != "pass", "message_count"].sum()),
                     "domains_seen": ",".join(sorted({str(v) for v in g["domain_name"].fillna("") if str(v)})),
                 }
-            )
+            ),
+            include_groups=False,
         )
         .reset_index()
         .sort_values(["max_risk_score", "total_messages"], ascending=[False, False])
