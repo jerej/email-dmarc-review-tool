@@ -7,7 +7,7 @@ readme = "README.md"
 packages = [{ include = "dmarc_review" }]
 
 [tool.poetry.dependencies]
-python = ">=3.10,<4.0"
+python = ">=3.11,<4.0"
 streamlit = ">=1.35.0"
 pandas = ">=2.2.0"
 python-dotenv = ">=1.0.1"
