@@ -249,11 +249,11 @@ def run() -> None:
     report_end_ts = pd.to_datetime(raw_records["report_end"], errors="coerce")
 
     if table_range == "Recent (last 24 hours)":
-        cutoff = pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(hours=24)
+        cutoff = pd.Timestamp.now("UTC").tz_localize(None) - pd.Timedelta(hours=24)
         filtered_records = raw_records.loc[report_end_ts >= cutoff].copy()
         st.caption("Tables filtered to reports ending in the last 24 hours.")
     elif table_range == "Last 7 days":
-        cutoff = pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(days=7)
+        cutoff = pd.Timestamp.now("UTC").tz_localize(None) - pd.Timedelta(days=7)
         filtered_records = raw_records.loc[report_end_ts >= cutoff].copy()
         st.caption("Tables filtered to reports ending in the last 7 days.")
     else:
