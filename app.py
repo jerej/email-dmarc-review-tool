@@ -40,6 +40,52 @@ def _contains_text(df: pd.DataFrame, column: str, needle: str) -> pd.Series:
     return df[column].fillna("").astype(str).str.contains(needle, case=False, na=False)
 
 
+def _filter_by_domain(df: pd.DataFrame, needle: str) -> pd.DataFrame:
+    domain_like = _domain_name_series(df)
+    domain_mask = domain_like.str.contains(needle, case=False, na=False)
+    domain_mask |= _contains_text(df, "domain", needle)
+    domain_mask |= _contains_text(df, "auth_dkim_domain", needle)
+    domain_mask |= _contains_text(df, "auth_spf_domain", needle)
+    return df.loc[domain_mask].copy()
+
+
+def _build_day_summary(df: pd.DataFrame) -> pd.DataFrame:
+    columns = ["report_day", "total_messages", "pass_count", "fail_like_count", "softfail_count"]
+    if df.empty:
+        return pd.DataFrame(columns=columns)
+
+    working = df.copy()
+    working["message_count"] = pd.to_numeric(working["message_count"], errors="coerce").fillna(0).astype(int)
+    working["report_day"] = pd.to_datetime(working["report_end"], errors="coerce").dt.strftime("%Y-%m-%d")
+    working = working.dropna(subset=["report_day"])
+    pass_mask = (working["dkim_result"] == "pass") & (working["spf_result"] == "pass")
+    fail_like_mask = (
+        working["disposition"].isin(["quarantine", "reject"])
+        | (working["dkim_result"] != "pass")
+        | (working["spf_result"] != "pass")
+    )
+    softfail_mask = working["spf_result"] == "softfail"
+
+    grouped = (
+        working.groupby("report_day", dropna=False)
+        .apply(
+            lambda g: pd.Series(
+                {
+                    "total_messages": int(g["message_count"].sum()),
+                    "pass_count": int(g.loc[pass_mask.loc[g.index], "message_count"].sum()),
+                    "fail_like_count": int(g.loc[fail_like_mask.loc[g.index], "message_count"].sum()),
+                    "softfail_count": int(g.loc[softfail_mask.loc[g.index], "message_count"].sum()),
+                }
+            ),
+            include_groups=False,
+        )
+        .reset_index()
+        .sort_values("report_day", ascending=False)
+    )
+
+    return grouped
+
+
 def _build_domain_summary(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(columns=["domain_name", "total_messages", "pass_count", "fail_like_count"])
@@ -241,33 +287,32 @@ def run() -> None:
     col3.metric("Fail-like Count", int(latest["fail_like_count"] or 0))
     col4.metric("Softfail Count", int(latest["softfail_count"] or 0))
 
+    domain_filter_value = domain_filter.strip()
+    domain_filtered_records = (
+        _filter_by_domain(raw_records, domain_filter_value) if domain_filter_value else raw_records
+    )
+    trend_summary = _build_day_summary(domain_filtered_records) if domain_filter_value else day_summary
+
     st.subheader("Recent Trend")
     st.line_chart(
-        day_summary.set_index("report_day")[["total_messages", "pass_count", "fail_like_count", "softfail_count"]]
+        trend_summary.set_index("report_day")[["total_messages", "pass_count", "fail_like_count", "softfail_count"]]
     )
 
-    report_end_ts = pd.to_datetime(raw_records["report_end"], errors="coerce")
+    report_end_ts = pd.to_datetime(domain_filtered_records["report_end"], errors="coerce")
 
     if table_range == "Recent (last 24 hours)":
         cutoff = pd.Timestamp.now("UTC").tz_localize(None) - pd.Timedelta(hours=24)
-        filtered_records = raw_records.loc[report_end_ts >= cutoff].copy()
+        filtered_records = domain_filtered_records.loc[report_end_ts >= cutoff].copy()
         st.caption("Tables filtered to reports ending in the last 24 hours.")
     elif table_range == "Last 7 days":
         cutoff = pd.Timestamp.now("UTC").tz_localize(None) - pd.Timedelta(days=7)
-        filtered_records = raw_records.loc[report_end_ts >= cutoff].copy()
+        filtered_records = domain_filtered_records.loc[report_end_ts >= cutoff].copy()
         st.caption("Tables filtered to reports ending in the last 7 days.")
     else:
-        filtered_records = raw_records
+        filtered_records = domain_filtered_records
         st.caption("Tables showing all available records.")
 
-    domain_filter_value = domain_filter.strip()
     if domain_filter_value:
-        domain_like = _domain_name_series(filtered_records)
-        domain_mask = domain_like.str.contains(domain_filter_value, case=False, na=False)
-        domain_mask |= _contains_text(filtered_records, "domain", domain_filter_value)
-        domain_mask |= _contains_text(filtered_records, "auth_dkim_domain", domain_filter_value)
-        domain_mask |= _contains_text(filtered_records, "auth_spf_domain", domain_filter_value)
-        filtered_records = filtered_records.loc[domain_mask].copy()
         st.caption(f"Domain filter active: '{domain_filter_value}'")
 
     domain_summary = _build_domain_summary(filtered_records)
