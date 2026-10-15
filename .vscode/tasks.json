@@ -2,11 +2,19 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "dmarc-review-tool",
+            "label": "Run dmarc-review-tool",
             "type": "shell",
             "command": "poetry run streamlit run app.py",
             "isBackground": true,
-            "problemMatcher": []
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
         }
     ]
 }
