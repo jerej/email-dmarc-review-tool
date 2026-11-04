@@ -9,6 +9,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 from dmarc_review import db
 
@@ -24,6 +25,10 @@ ACCEPTED_EXTENSIONS = {
     ".xz",
     ".xml",
 }
+# Retries use the client's exponential backoff (up to ~2 minutes in total at 6),
+# enough to outlast Gmail's per-minute per-user quota window.
+API_NUM_RETRIES = 6
+RATE_LIMIT_REASONS = {"rateLimitExceeded", "userRateLimitExceeded"}
 
 
 class GmailFetchError(Exception):
@@ -37,6 +42,7 @@ class GmailFetchStats:
     attachments_saved: int = 0
     attachments_duplicate: int = 0
     messages_marked_read: int = 0
+    rate_limited: bool = False
     errors: list[str] | None = None
 
     def __post_init__(self) -> None:
@@ -157,6 +163,26 @@ def _load_credentials(
         raise GmailFetchError(_auth_recovery_hint(token_path, scopes)) from exc
 
 
+def _is_rate_limit_error(exc: Exception) -> bool:
+    if not isinstance(exc, HttpError):
+        return False
+    if exc.status_code == 429:
+        return True
+    if exc.status_code != 403:
+        return False
+    details = exc.error_details if isinstance(exc.error_details, list) else []
+    return any(isinstance(d, dict) and d.get("reason") in RATE_LIMIT_REASONS for d in details)
+
+
+def _record_rate_limit(stats: GmailFetchStats) -> None:
+    stats.rate_limited = True
+    stats.errors.append(
+        "Gmail API quota reached; stopped early after saving "
+        f"{stats.attachments_saved} new attachment(s). "
+        "Wait a minute and fetch again to pick up the rest."
+    )
+
+
 def _iter_message_parts(payload: dict) -> list[dict]:
     parts = []
     stack = [payload]
@@ -188,12 +214,18 @@ def fetch_gmail_dmarc_attachments(
 
     next_page_token: str | None = None
     while True:
-        response = (
-            service.users()
-            .messages()
-            .list(userId="me", q=query, maxResults=max_results, pageToken=next_page_token)
-            .execute()
-        )
+        try:
+            response = (
+                service.users()
+                .messages()
+                .list(userId="me", q=query, maxResults=max_results, pageToken=next_page_token)
+                .execute(num_retries=API_NUM_RETRIES)
+            )
+        except HttpError as exc:
+            if not _is_rate_limit_error(exc):
+                raise GmailFetchError(f"Gmail message list failed: {exc}") from exc
+            _record_rate_limit(stats)
+            break
 
         messages = response.get("messages", [])
         for msg in messages:
@@ -213,7 +245,7 @@ def fetch_gmail_dmarc_attachments(
                     service.users()
                     .messages()
                     .get(userId="me", id=message_id, format="full")
-                    .execute()
+                    .execute(num_retries=API_NUM_RETRIES)
                 )
 
                 payload = full_message.get("payload", {})
@@ -230,7 +262,7 @@ def fetch_gmail_dmarc_attachments(
                             .messages()
                             .attachments()
                             .get(userId="me", messageId=message_id, id=attachment_id)
-                            .execute()
+                            .execute(num_retries=API_NUM_RETRIES)
                         )
                         encoded_data = attachment.get("data", "")
                     else:
@@ -262,15 +294,23 @@ def fetch_gmail_dmarc_attachments(
                                 id=message_id,
                                 body={"removeLabelIds": ["UNREAD"]},
                             )
-                            .execute()
+                            .execute(num_retries=API_NUM_RETRIES)
                         )
                         stats.messages_marked_read += 1
                     except Exception as exc:  # noqa: BLE001 - keep processing even if label update fails
+                        if _is_rate_limit_error(exc):
+                            raise
                         stats.errors.append(f"Failed to mark Gmail message as read {message_id}: {exc}")
 
                 db.mark_processed_file(conn, message_key, "gmail-message")
             except Exception as exc:  # noqa: BLE001 - keep fetching other messages
+                if _is_rate_limit_error(exc):
+                    _record_rate_limit(stats)
+                    break
                 stats.errors.append(f"Failed to process Gmail message {message_id}: {exc}")
+
+        if stats.rate_limited:
+            break
 
         next_page_token = response.get("nextPageToken")
         if not next_page_token:
