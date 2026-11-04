@@ -18,6 +18,10 @@ from dmarc_review.ingest import ingest_from_watched_folder
 
 st.set_page_config(page_title="DMARC Daily Review", layout="wide")
 
+# An IP's risk score only reflects reports this recent, so senders that were
+# fixed (or stopped) during the rollout drop out of the suspicious list.
+RISK_WINDOW_DAYS = 14
+
 
 def clear_extracted_xml_dir(extracted_xml_dir) -> int:
     """Remove extracted XML files so force rebuild starts from a clean staging area."""
@@ -119,47 +123,59 @@ def _build_domain_summary(df: pd.DataFrame) -> pd.DataFrame:
     return grouped
 
 
-def _build_suspicious_ips(df: pd.DataFrame) -> pd.DataFrame:
+def _build_suspicious_ips(df: pd.DataFrame, as_of: pd.Timestamp) -> pd.DataFrame:
+    """Summarize source IPs, scoring risk only from reports in the last RISK_WINDOW_DAYS before as_of."""
+    columns = [
+        "source_ip",
+        "reverse_dns",
+        "total_messages",
+        "recent_risk_score",
+        "risk_label",
+        "last_flagged",
+        "dkim_fail_messages",
+        "spf_fail_messages",
+        "domains_seen",
+    ]
     if df.empty:
-        return pd.DataFrame(
-            columns=[
-                "source_ip",
-                "reverse_dns",
-                "total_messages",
-                "max_risk_score",
-                "risk_label",
-                "dkim_fail_messages",
-                "spf_fail_messages",
-                "domains_seen",
-            ]
-        )
+        return pd.DataFrame(columns=columns)
 
     working = df.copy()
     working["message_count"] = pd.to_numeric(working["message_count"], errors="coerce").fillna(0).astype(int)
     working["risk_score"] = pd.to_numeric(working["risk_score"], errors="coerce").fillna(0).astype(int)
     working["reverse_dns"] = working["reverse_dns"].fillna("")
     working["domain_name"] = _domain_name_series(working)
+    working["report_end_ts"] = pd.to_datetime(working["report_end"], errors="coerce")
+    recent_mask = working["report_end_ts"] >= as_of - pd.Timedelta(days=RISK_WINDOW_DAYS)
+    flagged_mask = working["risk_label"].fillna("likely legitimate") != "likely legitimate"
+
+    def summarize(g: pd.DataFrame) -> pd.Series:
+        recent = g.loc[recent_mask.loc[g.index]]
+        if recent.empty:
+            recent_score, recent_label = 0, "no recent reports"
+        else:
+            top = recent.loc[recent["risk_score"].idxmax()]
+            recent_score, recent_label = int(top["risk_score"]), str(top["risk_label"])
+        flagged = g.loc[flagged_mask.loc[g.index], "report_end_ts"]
+        return pd.Series(
+            {
+                "total_messages": int(g["message_count"].sum()),
+                "recent_risk_score": recent_score,
+                "risk_label": recent_label,
+                "last_flagged": flagged.max().strftime("%Y-%m-%d") if not flagged.empty else "",
+                "dkim_fail_messages": int(g.loc[g["dkim_result"] != "pass", "message_count"].sum()),
+                "spf_fail_messages": int(g.loc[g["spf_result"] != "pass", "message_count"].sum()),
+                "domains_seen": ",".join(sorted({str(v) for v in g["domain_name"].fillna("") if str(v)})),
+            }
+        )
 
     grouped = (
         working.groupby(["source_ip", "reverse_dns"], dropna=False)
-        .apply(
-            lambda g: pd.Series(
-                {
-                    "total_messages": int(g["message_count"].sum()),
-                    "max_risk_score": int(g["risk_score"].max()),
-                    "risk_label": str(g["risk_label"].max() if not g["risk_label"].empty else ""),
-                    "dkim_fail_messages": int(g.loc[g["dkim_result"] != "pass", "message_count"].sum()),
-                    "spf_fail_messages": int(g.loc[g["spf_result"] != "pass", "message_count"].sum()),
-                    "domains_seen": ",".join(sorted({str(v) for v in g["domain_name"].fillna("") if str(v)})),
-                }
-            ),
-            include_groups=False,
-        )
+        .apply(summarize, include_groups=False)
         .reset_index()
-        .sort_values(["max_risk_score", "total_messages"], ascending=[False, False])
+        .sort_values(["recent_risk_score", "total_messages"], ascending=[False, False])
     )
 
-    return grouped
+    return grouped[columns]
 
 
 def run() -> None:
@@ -316,12 +332,19 @@ def run() -> None:
         st.caption(f"Domain filter active: '{domain_filter_value}'")
 
     domain_summary = _build_domain_summary(filtered_records)
-    suspicious_ips = _build_suspicious_ips(filtered_records)
+    # Anchor the risk window to the newest report rather than now, so a gap in
+    # fetching doesn't make every IP look clean.
+    risk_as_of = pd.to_datetime(raw_records["report_end"], errors="coerce").max()
+    suspicious_ips = _build_suspicious_ips(filtered_records, risk_as_of)
 
     st.subheader("Domain Summary")
     st.dataframe(domain_summary)
 
     st.subheader("Suspicious Source IPs")
+    st.caption(
+        f"Risk score and label reflect only the {RISK_WINDOW_DAYS} days up to the newest report "
+        f"({risk_as_of:%Y-%m-%d}). last_flagged is the most recent report with any risk label other than likely legitimate."
+    )
     st.dataframe(suspicious_ips)
 
     st.subheader("Raw Records")
